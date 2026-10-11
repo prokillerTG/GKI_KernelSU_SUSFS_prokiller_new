@@ -56,5 +56,20 @@ runs:
         # checkout as-is.
         if [ "${{ inputs.root_flavor }}" = "next" ]; then
           git fetch https://gitlab.com/pershoot/susfs4ksu.git gki-android14-6.1-dev || true
-          git log ..FETCH_HEAD --oneline -n 2 | awk '{print $1}' | tac | xargs git cherry-pick 2>/dev/null || true
+          # Take the upstream side on conflict (-X theirs): the picked commits
+          # carry the SELinux migration (fake_state -> backup_sepolicy via
+          # _with_policy) that the pinned base lacks. A plain pick conflicts
+          # on 50_add_susfs_in_gki-*.patch and used to be swallowed by
+          # `|| true`, leaving a half-merged tree that died much later at
+          # vmlinux link (undefined symbol: fake_state, 2026-10-11).
+          echo "Cherry-picking latest pershoot fixes:"
+          git log ..FETCH_HEAD --oneline -n 2 || true
+          if ! git cherry-pick -X theirs $(git log ..FETCH_HEAD --oneline -n 2 | awk '{print $1}' | tac) 2>/dev/null; then
+            echo "WARNING: susfs cherry-picks failed, aborting to pinned base" >&2
+            git cherry-pick --abort || true
+          fi
+          if grep -rn '<<<<<<<' kernel_patches/ 2>/dev/null; then
+            echo "ERROR: conflict markers left in patch tree" >&2
+            exit 1
+          fi
         fi
